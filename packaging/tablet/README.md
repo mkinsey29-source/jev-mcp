@@ -65,13 +65,8 @@ These defaults can be overridden with `JEV_TUNNEL_DIR` and
 
 4. Enter the OpenAI tunnel control-plane API key when prompted. Input is hidden.
    The installer does not write the key to disk.
-5. Install the launcher in a stable path if desired:
-
-   ```sh
-   mkdir -p "$HOME/.local/bin"
-   cp ./jev-start "$HOME/.local/bin/jev-start"
-   chmod +x "$HOME/.local/bin/jev-start"
-   ```
+5. If `jev-start` is beside the installer, the installer copies it to
+   `$HOME/.local/bin/jev-start` automatically.
 
 6. Start Jev:
 
