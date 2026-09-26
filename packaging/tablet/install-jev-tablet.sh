@@ -145,3 +145,12 @@ proot-distro login "$debian_name" \
   -- /bin/bash /opt/jev-installer/install-inside-debian.sh \
      "$tunnel_bind_target" "$profile" "$tunnel_id" \
   < <(printf '%s\n' "$CONTROL_PLANE_API_KEY")
+
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [[ -f "$script_dir/jev-start" ]]; then
+  mkdir -p "$HOME/.local/bin"
+  cp "$script_dir/jev-start" "$HOME/.local/bin/jev-start"
+  chmod 700 "$HOME/.local/bin/jev-start"
+  printf 'Installed launcher: %s/.local/bin/jev-start\n' "$HOME"
+fi
