@@ -18,8 +18,9 @@ The script reuses the tunnel-client already installed for Replicator, installs
 Node 22 + @jkudish/jev-mcp inside the existing Debian proot, and creates the
 separate "jev-tablet" tunnel profile.
 
-It does not ask for or store either the OpenAI control-plane key or the TypeSafe
-API key. Those are entered only when jev-start is launched.
+The OpenAI control-plane API key is requested with hidden input for profile
+creation and is not written to disk. The TypeSafe API key is not needed until
+jev-start is launched.
 EOF
 }
 
@@ -38,10 +39,30 @@ command -v proot-distro >/dev/null 2>&1 || {
   exit 2
 }
 
-printf 'Installing Jev runtime inside Debian...\n'
-proot-distro login "$debian_name" \
-  --bind "$tunnel_dir:$tunnel_bind_target" \
-  -- /bin/bash -s -- "$tunnel_bind_target" "$profile" "$tunnel_id" <<'DEBIAN'
+if [[ -z ${CONTROL_PLANE_API_KEY:-} ]]; then
+  [[ -t 0 ]] || {
+    printf 'CONTROL_PLANE_API_KEY is required; run from an interactive Termux terminal.\n' >&2
+    exit 2
+  }
+  printf 'OpenAI tunnel control-plane API key: ' >&2
+  IFS= read -r -s CONTROL_PLANE_API_KEY
+  printf '\n' >&2
+fi
+if [[ -z "$CONTROL_PLANE_API_KEY" ]]; then
+  printf 'No control-plane key was entered. Nothing was changed.\n' >&2
+  exit 2
+fi
+
+runtime_dir=$(mktemp -d "${TMPDIR:-/data/data/com.termux/files/usr/tmp}/jev-install.XXXXXX")
+chmod 700 "$runtime_dir"
+cleanup() {
+  unset CONTROL_PLANE_API_KEY
+  rm -rf "$runtime_dir"
+}
+trap cleanup EXIT INT TERM HUP
+
+cat >"$runtime_dir/install-inside-debian.sh" <<'DEBIAN'
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
 tunnel_bind_target=$1
@@ -50,6 +71,10 @@ tunnel_id=$3
 runtime_root=/opt/jev-runtime
 node_root="$runtime_root/node"
 package_root="$runtime_root/package"
+
+IFS= read -r CONTROL_PLANE_API_KEY
+export CONTROL_PLANE_API_KEY
+exec 0</dev/null
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl xz-utils
@@ -104,8 +129,19 @@ mcp_command="$node_root/bin/node $jev_entry"
   --tunnel-id "$tunnel_id" \
   --mcp-command "$mcp_command"
 
+"$tunnel_bind_target/tunnel-client" doctor --profile "$profile" --explain
+
 printf '\nJev tablet runtime installed.\n'
 printf 'Profile: %s\n' "$profile"
 printf 'MCP command: %s\n' "$mcp_command"
-printf 'Next: run jev-start from Termux and enter the two keys privately when prompted.\n'
+printf 'Next: run jev-start from Termux and enter the TypeSafe key privately when prompted.\n'
 DEBIAN
+chmod 700 "$runtime_dir/install-inside-debian.sh"
+
+printf 'Installing Jev runtime inside Debian and creating tunnel profile "%s"...\n' "$profile"
+proot-distro login "$debian_name" \
+  --bind "$tunnel_dir:$tunnel_bind_target" \
+  --bind "$runtime_dir:/opt/jev-installer" \
+  -- /bin/bash /opt/jev-installer/install-inside-debian.sh \
+     "$tunnel_bind_target" "$profile" "$tunnel_id" \
+  < <(printf '%s\n' "$CONTROL_PLANE_API_KEY")
