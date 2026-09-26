@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Start the dedicated Jev Secure MCP Tunnel from Termux without storing secrets.
+set -Eeuo pipefail
+
+profile=${JEV_TUNNEL_PROFILE:-jev-tablet}
+debian_name=${JEV_DEBIAN_NAME:-debian}
+tunnel_dir=${JEV_TUNNEL_DIR:-"$HOME/replicator-tunnel"}
+tunnel_bind_target=${JEV_TUNNEL_BIND_TARGET:-/opt/jev-tunnel}
+runtime_root=/opt/jev-runtime
+jev_entry=/opt/jev-runtime/package/node_modules/@jkudish/jev-mcp/dist/index.js
+
+usage() {
+  cat <<'EOF'
+Usage: jev-start [--doctor]
+
+Starts the existing OpenAI tunnel client with the dedicated "jev-tablet"
+profile. The OpenAI control-plane key and TypeSafe key are requested with hidden
+input when they are not already present in the current Termux environment.
+Neither key is written to disk by this launcher.
+EOF
+}
+
+doctor() {
+  command -v proot-distro >/dev/null 2>&1 || {
+    printf 'proot-distro is not available in Termux.\n' >&2
+    return 2
+  }
+  [[ -x "$tunnel_dir/tunnel-client" ]] || {
+    printf 'Tunnel client not found: %s/tunnel-client\n' "$tunnel_dir" >&2
+    return 2
+  }
+
+  proot-distro login "$debian_name" \
+    --bind "$tunnel_dir:$tunnel_bind_target" \
+    -- /bin/bash -s -- "$tunnel_bind_target" "$runtime_root" "$jev_entry" "$profile" <<'DEBIAN'
+set -Eeuo pipefail
+tunnel_bind_target=$1
+runtime_root=$2
+jev_entry=$3
+profile=$4
+
+[[ -x "$runtime_root/node/bin/node" ]] || {
+  printf 'Node runtime is missing: %s/node/bin/node\n' "$runtime_root" >&2
+  exit 2
+}
+[[ -f "$jev_entry" ]] || {
+  printf 'Jev MCP is missing: %s\n' "$jev_entry" >&2
+  exit 2
+}
+"$runtime_root/node/bin/node" --version
+"$tunnel_bind_target/tunnel-client" help quickstart >/dev/null
+printf 'Tunnel client is executable.\n'
+printf 'Jev MCP entrypoint present.\n'
+printf 'Tunnel profile expected: %s\n' "$profile"
+DEBIAN
+}
+
+case ${1:-} in
+  '') ;;
+  --doctor)
+    doctor
+    exit $?
+    ;;
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+doctor
+
+if [[ -z ${CONTROL_PLANE_API_KEY:-} ]]; then
+  [[ -t 0 ]] || {
+    printf 'CONTROL_PLANE_API_KEY is required; run from an interactive Termux terminal.\n' >&2
+    exit 2
+  }
+  printf 'OpenAI tunnel control-plane API key: ' >&2
+  IFS= read -r -s CONTROL_PLANE_API_KEY
+  printf '\n' >&2
+fi
+
+if [[ -z ${TYPESAFE_API_KEY:-} ]]; then
+  [[ -t 0 ]] || {
+    printf 'TYPESAFE_API_KEY is required; run from an interactive Termux terminal.\n' >&2
+    exit 2
+  }
+  printf 'TypeSafe API key: ' >&2
+  IFS= read -r -s TYPESAFE_API_KEY
+  printf '\n' >&2
+fi
+
+if [[ -z "$CONTROL_PLANE_API_KEY" || -z "$TYPESAFE_API_KEY" ]]; then
+  printf 'Both keys are required. Nothing was saved.\n' >&2
+  exit 2
+fi
+
+cleanup() {
+  unset CONTROL_PLANE_API_KEY TYPESAFE_API_KEY
+}
+trap cleanup EXIT INT TERM HUP
+
+printf 'Starting Jev tunnel profile "%s". Press Ctrl+C to stop it.\n' "$profile"
+
+# proot-distro clears or rewrites parts of the caller environment, so transfer
+# both secrets over private stdin instead of command arguments or files.
+proot-distro login "$debian_name" \
+  --bind "$tunnel_dir:$tunnel_bind_target" \
+  -- /bin/sh -c '
+    IFS= read -r CONTROL_PLANE_API_KEY
+    IFS= read -r TYPESAFE_API_KEY
+    export CONTROL_PLANE_API_KEY TYPESAFE_API_KEY
+    exec 0</dev/null
+    exec "$3/tunnel-client" run --profile "$1"
+  ' sh "$profile" "$runtime_root" "$tunnel_bind_target" \
+  < <(printf '%s\n%s\n' "$CONTROL_PLANE_API_KEY" "$TYPESAFE_API_KEY")
