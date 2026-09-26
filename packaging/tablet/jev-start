@@ -48,7 +48,8 @@ profile=$4
   exit 2
 }
 "$runtime_root/node/bin/node" --version
-"$tunnel_bind_target/tunnel-client" --version
+"$tunnel_bind_target/tunnel-client" help quickstart >/dev/null
+printf 'Tunnel client is executable.\n'
 printf 'Jev MCP entrypoint present.\n'
 printf 'Tunnel profile expected: %s\n' "$profile"
 DEBIAN
